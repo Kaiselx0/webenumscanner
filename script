@@ -12,24 +12,43 @@ def show_progress(task_name, stop_event):
         time.sleep(30)
 
 def run_nmap(ip):
-    print(f"[+] Running Nmap on {ip}...")
-    
-    # Start progress thread
+    print(f"Starting Nmap scan on {ip}...")
+
     stop_event = threading.Event()
-    progress_thread = threading.Thread(target=show_progress, args=("Nmap", stop_event))
+    progress_thread = threading.Thread(target=show_progress, args=("Running Nmap scan", stop_event))
     progress_thread.start()
-    
-    # Run nmap
-    result = subprocess.run(["nmap", "-sS", "-p-", "--open", ip], capture_output=True, text=True)
-    
+
+    # Initial Nmap command
+    nmap_command = ["nmap", "-sS", "-sC", "-sV", "-p-", "--open", ip]
+    result = subprocess.run(nmap_command, capture_output=True, text=True)
+
     stop_event.set()
     progress_thread.join()
-    
-    print(result.stdout)
+
+    output = result.stdout
+    print(output)
+
+    # Check if the host seems down or ping is rejected
+    if any(x in output.lower() for x in ["0 hosts up", "host seems down", "ignoring host", "ping scan failed"]):
+        print("\n[!] Host might be rejecting ping probes. Retrying scan with -Pn...\n")
+
+        stop_event = threading.Event()
+        progress_thread = threading.Thread(target=show_progress, args=("Retrying Nmap with -Pn", stop_event))
+        progress_thread.start()
+
+        # Retry with -Pn
+        fallback_command = ["nmap", "-Pn", "-sS", "-sC", "-sV", "-p-", "--open", ip]
+        result = subprocess.run(fallback_command, capture_output=True, text=True)
+
+        stop_event.set()
+        progress_thread.join()
+
+        output = result.stdout
+        print(output)
 
     # Extract open web ports
     web_services = []
-    lines = result.stdout.splitlines()
+    lines = output.splitlines()
     for line in lines:
         if "/tcp" in line and "open" in line:
             port_match = re.search(r"(\d+)/tcp", line)
@@ -41,28 +60,28 @@ def run_nmap(ip):
 
 def run_dnsenum(domain):
     print(f"[+] Running dnsenum on {domain}...")
-    
+
     stop_event = threading.Event()
     progress_thread = threading.Thread(target=show_progress, args=("dnsenum", stop_event))
     progress_thread.start()
-    
+
     subprocess.run(["dnsenum", domain])
-    
+
     stop_event.set()
     progress_thread.join()
 
 def run_gobuster(domain, wordlist):
     print(f"[+] Running gobuster on {domain}...")
-    
+
     stop_event = threading.Event()
     progress_thread = threading.Thread(target=show_progress, args=("gobuster", stop_event))
     progress_thread.start()
-    
+
     protocol = "https" if ":443" in domain else "http"
     url = f"{protocol}://{domain}"
-    
+
     subprocess.run(["gobuster", "dir", "-u", url, "-w", wordlist])
-    
+
     stop_event.set()
     progress_thread.join()
 
