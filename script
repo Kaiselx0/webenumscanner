@@ -1,0 +1,95 @@
+import subprocess
+import re
+import threading
+import time
+
+def show_progress(task_name, stop_event):
+    spinner = ["|", "/", "-", "\\"]
+    idx = 0
+    while not stop_event.is_set():
+        print(f"[+] {task_name} is still running... {spinner[idx % len(spinner)]}")
+        idx += 1
+        time.sleep(30)
+
+def run_nmap(ip):
+    print(f"[+] Running Nmap on {ip}...")
+    
+    # Start progress thread
+    stop_event = threading.Event()
+    progress_thread = threading.Thread(target=show_progress, args=("Nmap", stop_event))
+    progress_thread.start()
+    
+    # Run nmap
+    result = subprocess.run(["nmap", "-sS", "-p-", "--open", ip], capture_output=True, text=True)
+    
+    stop_event.set()
+    progress_thread.join()
+    
+    print(result.stdout)
+
+    # Extract open web ports
+    web_services = []
+    lines = result.stdout.splitlines()
+    for line in lines:
+        if "/tcp" in line and "open" in line:
+            port_match = re.search(r"(\d+)/tcp", line)
+            if port_match:
+                port = int(port_match.group(1))
+                if port in [80, 443]:
+                    web_services.append(f"{ip}:{port}")
+    return web_services
+
+def run_dnsenum(domain):
+    print(f"[+] Running dnsenum on {domain}...")
+    
+    stop_event = threading.Event()
+    progress_thread = threading.Thread(target=show_progress, args=("dnsenum", stop_event))
+    progress_thread.start()
+    
+    subprocess.run(["dnsenum", domain])
+    
+    stop_event.set()
+    progress_thread.join()
+
+def run_gobuster(domain, wordlist):
+    print(f"[+] Running gobuster on {domain}...")
+    
+    stop_event = threading.Event()
+    progress_thread = threading.Thread(target=show_progress, args=("gobuster", stop_event))
+    progress_thread.start()
+    
+    protocol = "https" if ":443" in domain else "http"
+    url = f"{protocol}://{domain}"
+    
+    subprocess.run(["gobuster", "dir", "-u", url, "-w", wordlist])
+    
+    stop_event.set()
+    progress_thread.join()
+
+def main():
+    ip = input("Enter target IP address: ").strip()
+    wordlist = input("Enter full path to wordlist for Gobuster: ").strip()
+
+    web_services = run_nmap(ip)
+
+    if not web_services:
+        print("[!] No web app to enumerate.")
+        return
+
+    for service in web_services:
+        domain = service.split(":")[0]
+
+        # Run dnsenum and gobuster concurrently
+        dns_thread = threading.Thread(target=run_dnsenum, args=(domain,))
+        gobuster_thread = threading.Thread(target=run_gobuster, args=(service, wordlist))
+
+        dns_thread.start()
+        gobuster_thread.start()
+
+        dns_thread.join()
+        gobuster_thread.join()
+
+    print("\n[✓] Scanning and enumeration complete.")
+
+if __name__ == "__main__":
+    main()
